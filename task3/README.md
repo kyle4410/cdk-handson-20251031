@@ -2,27 +2,26 @@
 
 ## 概要
 
-お問い合わせフォーム（フロントは省略）の送信情報を **Lambda** が受け取り、**Secrets Manager** に保管された DB 資格情報を用いて **RDS（MySQL/Aurora MySQL）** に **プライベート接続で INSERT** します。RDS は **プライベートサブネット**に配置し、インターネット非到達の状態とします。
+お問い合わせフォーム（フロントは省略）の送信情報を **Lambda** が受け取り、**Secrets Manager** に保管された DB 資格情報を用いて **RDS（MySQL/Aurora MySQL）** に **プライベート接続で INSERT** します。RDS, Lambdaともに **プライベートサブネット**に配置し、インターネット非到達の状態とします。
 
 ## 要件定義
 
 ### 基本要件
 
-* VPC（2 つ以上の AZ）。**プライベートサブネットのみで RDS** を作成
+* VPC（2 つ以上の AZ）。**プライベートサブネットで RDS および Lambda** を作成
+* IGWについては設置しても問題ないですがNGWについては作成しないでください。
 * Lambda は `lambda/rds-insert-handler.py`を使用してください
-* RDS は**インターネットに出さない**
 * **Secrets Manager** に `db-credentials` シークレットを作成（JSON）
-* **VPC エンドポイント**（Interface）: `com.amazonaws.<region>.secretsmanager`, `logs`, `kms`（KMS を使う場合）。必要に応じて `ec2`、`lambda` も。S3 に触れる場合は **Gateway エンドポイント (S3)**
 * セキュリティグループ: Lambda → RDS の 3306/TCP を許可。最小権限
 
 ### 構成図
 
 ```mermaid
 flowchart LR
-  Client((Form/Caller)) --> Lmb[Lambda in VPC]
+  Client((Form/Caller)) --> Lmb[Lambda]
   Lmb -.->|GetSecret| SM[Secrets Manager]
   Lmb -.->|PutLogs| CWL[CloudWatch Logs]
-  Lmb -->|3306| RDS[(RDS MySQL/Aurora\nPrivate Subnets)]
+  Lmb -->|3306| RDS[(RDS MySQL)]
 ```
 
 ## 事前準備
@@ -62,14 +61,14 @@ RDSインスタンス作成後、以下の形式でシークレットを登録�
 
 1. **VPC関連**
    - VPC（2つ以上のAZ）
-   - **プライベートサブネット**（RDS用）
+   - **プライベートサブネット**（Lambda用、RDS用）
    - セキュリティグループ（Lambda用、RDS用）
+   - +α
 
 2. **RDS関連**
    - RDS MySQL/Aurora MySQLインスタンス（プライベートサブネット、マルチAZ推奨）
    - データベース名、ユーザー名、パスワード
    - パラメータグループ（必要に応じて）
-   - テーブル作成方法は手順がありますが、どのように作成するかは考えてみてください。
 
 3. **Secrets Manager**
    - シークレット: `db-credentials`（JSON形式）
