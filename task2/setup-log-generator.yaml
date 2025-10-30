@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudWatch Logs Generator - EventBridge + Lambda for CLF format logs"
+
+Parameters:
+  LogGroupName:
+    Type: String
+    Default: "/aws/lambda/log-generator"
+    Description: "CloudWatch Logs group name"
+
+  ScheduleExpression:
+    Type: String
+    Default: "rate(5 minutes)"
+    Description: "EventBridge schedule expression (default: every 5 minutes)"
+
+Resources:
+  # CloudWatch Logs Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: HandsOn
+        - Key: Component
+          Value: LogGenerator
+
+  # IAM Role for Lambda Function
+  LogGeneratorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-log-generator-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudWatchLogsWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${LogGroup.Arn}:*"
+      Tags:
+        - Key: Project
+          Value: HandsOn
+
+  # Lambda Function for Log Generation
+  LogGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-log-generator"
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LogGeneratorLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import json
+          import random
+          import logging
+          from datetime import datetime, timezone
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Sample IP addresses
+          IP_ADDRESSES = [
+              '192.0.2.1', '192.0.2.2', '198.51.100.1', '198.51.100.2',
+              '203.0.113.1', '203.0.113.2', '10.0.1.1', '10.0.1.2'
+          ]
+
+          # Sample HTTP methods and paths
+          METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+          PATHS = [
+              '/api/items', '/api/order', '/api/users', '/api/products',
+              '/health', '/status', '/api/items?id=1', '/api/items?id=2'
+          ]
+
+          # Sample status codes
+          STATUS_CODES = [200, 201, 400, 404, 500, 503]
+
+          # Sample user agents
+          USER_AGENTS = [
+              'curl/8.1', 'python-requests/2.32', 'Mozilla/5.0',
+              'PostmanRuntime/7.32', 'Go-http-client/1.1'
+          ]
+
+          def generate_clf_log():
+              """Generate a Common Log Format (CLF) log entry"""
+              ip = random.choice(IP_ADDRESSES)
+              method = random.choice(METHODS)
+              path = random.choice(PATHS)
+              status = random.choice(STATUS_CODES)
+              size = random.randint(100, 5000)
+              user_agent = random.choice(USER_AGENTS)
+
+              # Format: IP - - [timestamp] "METHOD path HTTP/1.1" status size "-" "user-agent"
+              now = datetime.now(timezone.utc)
+              timestamp = now.strftime('%d/%b/%Y:%H:%M:%S %z')
+
+              log_line = f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} {size} "-" "{user_agent}"'
+              return log_line
+
+          def lambda_handler(event, context):
+              """Lambda handler to generate CLF format logs"""
+              try:
+                  # Generate 5-10 random log entries
+                  num_logs = random.randint(5, 10)
+                  logs = []
+
+                  for _ in range(num_logs):
+                      log_line = generate_clf_log()
+                      logs.append(log_line)
+
+                      # Log to CloudWatch Logs
+                      logger.info(log_line)
+
+                  result = {
+                      'statusCode': 200,
+                      'message': f'Generated {num_logs} log entries',
+                      'timestamp': datetime.now(timezone.utc).isoformat()
+                  }
+
+                  logger.info(f'SUCCESS: Generated {num_logs} log entries to CloudWatch Logs')
+
+                  return result
+
+              except Exception as e:
+                  error_msg = f'ERROR: Failed to generate logs: {str(e)}'
+                  logger.error(error_msg, exc_info=True)
+                  raise
+      Tags:
+        Project: HandsOn
+        Component: LogGenerator
+
+  # EventBridge Rule to trigger Lambda every 5 minutes
+  LogGeneratorScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      RuleName: !Sub "${AWS::StackName}-log-generator-schedule"
+      Description: "Trigger log generator Lambda every 5 minutes"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LogGeneratorFunction.Arn
+          Id: LogGeneratorTarget
+      Tags:
+        - Key: Project
+          Value: HandsOn
+
+  # Permission for EventBridge to invoke Lambda
+  LogGeneratorLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LogGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LogGeneratorScheduleRule.Arn
+
+Outputs:
+  LogGroupName:
+    Description: "CloudWatch Logs group name"
+    Value: !Ref LogGroupName
+    Export:
+      Name: !Sub "${AWS::StackName}-LogGroupName"
+
+  LogGroupArn:
+    Description: "CloudWatch Logs group ARN"
+    Value: !GetAtt LogGroup.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LogGroupArn"
+
+  LambdaFunctionName:
+    Description: "Log generator Lambda function name"
+    Value: !Ref LogGeneratorFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaFunctionName"
+
+  LambdaFunctionArn:
+    Description: "Log generator Lambda function ARN"
+    Value: !GetAtt LogGeneratorFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaFunctionArn"
