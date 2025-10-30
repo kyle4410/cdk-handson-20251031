@@ -10,81 +10,82 @@
 
 ## デプロイ手順
 
-### 方法1: AWS CLIを使用（推奨）
-
-#### Linux/Mac
+### Linux/Mac
 
 ```bash
-# スタック名を指定（任意）
-STACK_NAME="hands-on-log-generator"
-
 # デプロイ実行
 aws cloudformation deploy \
   --template-file setup-log-generator.yaml \
-  --stack-name ${STACK_NAME} \
+  --stack-name hands-on-log-generator \
   --capabilities CAPABILITY_NAMED_IAM \
   --region ap-northeast-1 \
   --tags Project=HandsOn Component=LogGenerator
 
 # 出力の確認
 aws cloudformation describe-stacks \
-  --stack-name ${STACK_NAME} \
+  --stack-name hands-on-log-generator \
   --region ap-northeast-1 \
   --query 'Stacks[0].Outputs'
 ```
 
-#### Windows (PowerShell)
+### Windows (PowerShell)
 
 ```powershell
-# スタック名を指定
-$STACK_NAME = "hands-on-log-generator"
-
 # デプロイ実行
 aws cloudformation deploy `
   --template-file setup-log-generator.yaml `
-  --stack-name $STACK_NAME `
+  --stack-name hands-on-log-generator `
   --capabilities CAPABILITY_NAMED_IAM `
   --region ap-northeast-1 `
   --tags Project=HandsOn Component=LogGenerator
 
 # 出力の確認
 aws cloudformation describe-stacks `
-  --stack-name $STACK_NAME `
+  --stack-name hands-on-log-generator `
   --region ap-northeast-1 `
   --query 'Stacks[0].Outputs'
 ```
 
-### 方法2: スクリプトを使用
+### Windows (CMD)
 
-#### Linux/Mac
+```cmd
+# デプロイ実行
+aws cloudformation deploy ^
+  --template-file setup-log-generator.yaml ^
+  --stack-name hands-on-log-generator ^
+  --capabilities CAPABILITY_NAMED_IAM ^
+  --region ap-northeast-1 ^
+  --tags Project=HandsOn Component=LogGenerator
 
-```bash
-chmod +x deploy-log-generator.sh
-./deploy-log-generator.sh
-```
-
-#### Windows
-
-```powershell
-.\deploy-log-generator.ps1
+# 出力の確認
+aws cloudformation describe-stacks ^
+  --stack-name hands-on-log-generator ^
+  --region ap-northeast-1 ^
+  --query 'Stacks[0].Outputs'
 ```
 
 ## 作成されるリソース
 
 以下のリソースが作成されます：
 
-1. **CloudWatch Logsグループ**: `/aws/lambda/log-generator`
+1. **CloudWatch Logsグループ**: `/aws/access-logs/app-access-logs`
    - ログの保持期間: 7日
+   - アクセスログを保存するための専用ロググループ
 
-2. **Lambda関数**: `hands-on-log-generator-log-generator`
+2. **CloudWatch Logsストリーム**: `app-instance-001`
+   - 固定のインスタンスID形式のログストリーム
+   - すべてのアクセスログがこのストリームに出力されます
+
+3. **Lambda関数**: `hands-on-log-generator-log-generator`
    - ランタイム: Python 3.12
-   - 5分ごとにCLF形式のログをCloudWatch Logsに出力
+   - 5分ごとにCLF形式のログをCloudWatch Logs API経由で指定ロググループに直接出力
+   - Lambda関数の実行ログは `/aws/lambda/hands-on-log-generator-log-generator` に出力されます
 
-3. **EventBridgeルール**: `hands-on-log-generator-log-generator-schedule`
-   - スケジュール: 5分ごと（デフォルト）
+4. **EventBridgeルール**: `hands-on-log-generator-log-generator-schedule`
+   - スケジュール: 3分ごと（デフォルト）
    - Lambda関数を自動トリガー
 
-4. **IAMロール**: `hands-on-log-generator-log-generator-lambda-role`
+5. **IAMロール**: `hands-on-log-generator-log-generator-lambda-role`
    - CloudWatch Logsへの書き込み権限
 
 ## 動作確認
@@ -92,21 +93,28 @@ chmod +x deploy-log-generator.sh
 ### 1. CloudWatch Logsの確認
 
 ```bash
-# ロググループを確認
+# アクセスログのロググループを確認
 aws logs describe-log-groups \
-  --log-group-name-prefix "/aws/lambda/log-generator" \
+  --log-group-name-prefix "/aws/access-logs/app-access-logs" \
   --region ap-northeast-1
 
-# ログストリームを確認
+# アクセスログのログストリームを確認
 aws logs describe-log-streams \
-  --log-group-name "/aws/lambda/log-generator" \
+  --log-group-name "/aws/access-logs/app-access-logs" \
+  --log-stream-name-prefix app-instance-001 \
   --region ap-northeast-1 \
   --order-by LastEventTime \
   --descending \
   --max-items 5
 
-# 最新のログを確認
-aws logs tail /aws/lambda/log-generator \
+# 最新のアクセスログを確認
+aws logs tail /aws/access-logs/app-access-logs \
+  --log-stream-names app-instance-001 \
+  --follow \
+  --region ap-northeast-1
+
+# Lambda関数の実行ログを確認（エラー確認用）
+aws logs tail /aws/lambda/hands-on-log-generator-log-generator \
   --follow \
   --region ap-northeast-1
 ```
@@ -135,50 +143,66 @@ aws cloudwatch get-metric-statistics \
 
 `setup-log-generator.yaml`の以下のパラメータを変更できます：
 
-- **LogGroupName**: CloudWatch Logsグループ名（デフォルト: `/aws/lambda/log-generator`）
-- **ScheduleExpression**: EventBridgeのスケジュール表現（デフォルト: `rate(5 minutes)`）
+- **LogGroupName**: CloudWatch Logsグループ名（デフォルト: `/aws/access-logs/app-access-logs`）
+- **LogStreamName**: CloudWatch Logsストリーム名（デフォルト: `app-instance-001`）
+- **ScheduleExpression**: EventBridgeのスケジュール表現（デフォルト: `rate(3 minutes)`）
 
 変更する場合は、デプロイ時にパラメータを指定：
 
 ```bash
 aws cloudformation deploy \
   --template-file setup-log-generator.yaml \
-  --stack-name ${STACK_NAME} \
+  --stack-name hands-on-log-generator \
   --capabilities CAPABILITY_NAMED_IAM \
   --region ap-northeast-1 \
   --parameter-overrides \
     LogGroupName="/custom/log-group" \
-    ScheduleExpression="rate(10 minutes)"
+    LogStreamName="custom-instance-001" \
+    ScheduleExpression="rate(1 minutes)"
 ```
 
 ## 削除手順
 
-### AWS CLIを使用
+### Linux/Mac
 
 ```bash
 # スタックの削除
 aws cloudformation delete-stack \
-  --stack-name ${STACK_NAME} \
+  --stack-name hands-on-log-generator \
   --region ap-northeast-1
 
 # 削除状態の確認
 aws cloudformation describe-stacks \
-  --stack-name ${STACK_NAME} \
+  --stack-name hands-on-log-generator \
   --region ap-northeast-1
 ```
 
-### スクリプトを使用
-
-#### Linux/Mac
-
-```bash
-./deploy-log-generator.sh destroy
-```
-
-#### Windows
+### Windows (PowerShell)
 
 ```powershell
-.\deploy-log-generator.ps1 -Action destroy
+# スタックの削除
+aws cloudformation delete-stack `
+  --stack-name hands-on-log-generator `
+  --region ap-northeast-1
+
+# 削除状態の確認
+aws cloudformation describe-stacks `
+  --stack-name hands-on-log-generator `
+  --region ap-northeast-1
+```
+
+### Windows (CMD)
+
+```cmd
+# スタックの削除
+aws cloudformation delete-stack ^
+  --stack-name hands-on-log-generator ^
+  --region ap-northeast-1
+
+# 削除状態の確認
+aws cloudformation describe-stacks ^
+  --stack-name hands-on-log-generator ^
+  --region ap-northeast-1
 ```
 
 ## トラブルシューティング
@@ -189,7 +213,7 @@ aws cloudformation describe-stacks \
 - スタックのイベントを確認:
   ```bash
   aws cloudformation describe-stack-events \
-    --stack-name ${STACK_NAME} \
+    --stack-name hands-on-log-generator \
     --region ap-northeast-1 \
     --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`]'
   ```
@@ -203,12 +227,14 @@ aws cloudformation describe-stacks \
 ### ログが出力されない
 
 - CloudWatch Logsグループが作成されているか確認
-- Lambda関数の実行ログを確認
+- Lambda関数の実行ログ（`/aws/lambda/hands-on-log-generator-log-generator`）を確認
 - EventBridgeのスケジュールが正しく設定されているか確認
+- Lambda関数のIAMロールにCloudWatch Logsへの書き込み権限があるか確認
+- 環境変数（LOG_GROUP_NAME、LOG_STREAM_NAME）が正しく設定されているか確認
 
 ## 注意事項
 
-- この環境は5分ごとにLambda関数を実行します。コストに注意してください
+- この環境は3分ごとにLambda関数を実行します。コストに注意してください
 - ハンズオン終了後は必ずスタックを削除してください
 - CloudWatch Logsの保持期間は7日に設定されていますが、必要に応じて調整してください
 

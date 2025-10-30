@@ -5,8 +5,7 @@
 ## 前提条件
 
 - RDS MySQLインスタンスが作成済みであること
-- RDSインスタンスへの接続方法があること（EC2経由、クライアントツールなど）
-  - **注意**: VPC内のプライベートサブネットにRDSがあるため、VPC内のEC2インスタンスから接続するか、AWS Systems Manager Session Manager経由で接続する必要があります
+- RDSインスタンスへの接続方法があること
 
 ## テーブル設計
 
@@ -30,37 +29,6 @@
 - PRIMARY KEY: `id`
 - INDEX: `idx_created_at (created_at)`
 
-## 接続手順
-
-### 方法1: EC2インスタンス経由（推奨）
-
-1. VPC内にEC2インスタンスを起動（パブリックサブネットでも可、ただしIGWが必要）
-2. EC2インスタンスにSSH接続
-3. MySQLクライアントをインストール（未インストールの場合）
-
-   ```bash
-   # Amazon Linux 2023
-   sudo dnf install -y mysql
-   ```
-
-4. RDSに接続
-
-   ```bash
-   mysql -h <rds-endpoint> -P 3306 -u <username> -p
-   ```
-
-### 方法2: AWS Systems Manager Session Manager経由
-
-1. EC2インスタンスにSession Managerで接続
-2. 上記「方法1」のステップ3以降を実行
-
-### 方法3: MySQL WorkbenchやDBeaver等のクライアントツール
-
-1. クライアントツールを起動
-2. RDSエンドポイント、ポート、ユーザー名、パスワードを入力
-3. 接続
-
-**注意**: プライベートサブネットのRDSに接続するには、VPN接続やDirect Connectなどのネットワーク接続が必要です。
 
 ## データベースとユーザーの作成
 
@@ -148,13 +116,6 @@ SELECT * FROM inquiries;
 ```
 
 ## トラブルシューティング
-
-### 接続できない
-
-- セキュリティグループでMySQL（3306/TCP）への接続が許可されているか確認
-- RDSエンドポイント名とポート番号が正しいか確認
-- ユーザー名とパスワードが正しいか確認
-- ネットワーク接続が確立されているか確認（VPC、サブネット、ルートテーブル）
 
 ### 権限エラー
 

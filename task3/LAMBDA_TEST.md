@@ -7,7 +7,6 @@
 - Lambda関数がデプロイ済みであること
 - RDSに `inquiries` テーブルが作成済みであること（[テーブル作成手順](./DATABASE_SETUP.md)参照）
 - Secrets Managerに `db-credentials` シークレットが作成済みであること
-- VPCエンドポイントが正しく設定されていること
 
 ## テスト方法
 
@@ -185,8 +184,6 @@ aws rds-data execute-statement \
 ### Lambda関数がタイムアウトする
 
 - CloudWatch Logsでタイムアウト前にどの処理で止まっているか確認
-- VPCエンドポイントの設定を確認
-- セキュリティグループの設定を確認
 - Lambda関数のタイムアウト設定を延長（デフォルト3秒から30秒以上推奨）
 
 ### Secrets Managerからシークレットを取得できない
@@ -198,8 +195,6 @@ ERROR: Failed to connect to RDS: An error occurred (AccessDen心胸Exception) wh
 
 **対処方法**:
 - Lambda関数のIAMロールに `secretsmanager:GetSecretValue` 権限があるか確認
-- VPCエンドポイント（Secrets Manager）が正しく設定されているか確認
-- VPCエンドポイントのセキュリティグループでLambdaからの通信が許可されているか確認
 
 ### RDSに接続できない
 
@@ -272,4 +267,3 @@ cat response-*.json | jq .
 -- テストデータの削除（注意: 本番データも削除される可能性があります）
 DELETE FROM inquiries WHERE email LIKE '%@example.com';
 ```
-

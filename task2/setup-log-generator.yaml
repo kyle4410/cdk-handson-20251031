@@ -4,13 +4,18 @@ Description: "CloudWatch Logs Generator - EventBridge + Lambda for CLF format lo
 Parameters:
   LogGroupName:
     Type: String
-    Default: "/aws/lambda/log-generator"
-    Description: "CloudWatch Logs group name"
+    Default: "/aws/access-logs/app-access-logs"
+    Description: "CloudWatch Logs group name for access logs"
+
+  LogStreamName:
+    Type: String
+    Default: "app-instance-001"
+    Description: "CloudWatch Logs stream name (fixed instance ID)"
 
   ScheduleExpression:
     Type: String
-    Default: "rate(5 minutes)"
-    Description: "EventBridge schedule expression (default: every 5 minutes)"
+    Default: "rate(3 minutes)"
+    Description: "EventBridge schedule expression (default: every 3 minutes)"
 
 Resources:
   # CloudWatch Logs Group
@@ -48,6 +53,7 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
+                  - logs:DescribeLogStreams
                   - logs:PutLogEvents
                 Resource: !Sub "${LogGroup.Arn}:*"
       Tags:
@@ -64,15 +70,28 @@ Resources:
       Role: !GetAtt LogGeneratorLambdaRole.Arn
       Timeout: 60
       MemorySize: 128
+      Environment:
+        Variables:
+          LOG_GROUP_NAME: !Ref LogGroupName
+          LOG_STREAM_NAME: !Ref LogStreamName
       Code:
         ZipFile: |
           import json
           import random
           import logging
+          import boto3
           from datetime import datetime, timezone
+          import os
 
           logger = logging.getLogger()
           logger.setLevel(logging.INFO)
+
+          # CloudWatch Logs client
+          logs_client = boto3.client('logs')
+
+          # Get log group and stream names from environment
+          LOG_GROUP_NAME = os.environ.get('LOG_GROUP_NAME', '/aws/access-logs/app-access-logs')
+          LOG_STREAM_NAME = os.environ.get('LOG_STREAM_NAME', 'app-instance-001')
 
           # Sample IP addresses
           IP_ADDRESSES = [
@@ -112,27 +131,113 @@ Resources:
               log_line = f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} {size} "-" "{user_agent}"'
               return log_line
 
+          def ensure_log_stream_exists():
+              """Ensure the log stream exists, create if it doesn't"""
+              stream_exists = False
+              try:
+                  # Check if stream exists
+                  response = logs_client.describe_log_streams(
+                      logGroupName=LOG_GROUP_NAME,
+                      logStreamNamePrefix=LOG_STREAM_NAME,
+                      limit=1
+                  )
+                  # Check if the exact stream name exists
+                  if response.get('logStreams'):
+                      for stream in response['logStreams']:
+                          if stream.get('logStreamName') == LOG_STREAM_NAME:
+                              stream_exists = True
+                              break
+              except logs_client.exceptions.ResourceNotFoundException:
+                  # Log group doesn't exist, will be created by CloudFormation
+                  pass
+              except Exception as e:
+                  # Log error but continue - we'll try to create stream anyway
+                  logger.debug(f'Error checking log stream existence: {str(e)}')
+
+              if not stream_exists:
+                  # Stream doesn't exist, create it
+                  try:
+                      logs_client.create_log_stream(
+                          logGroupName=LOG_GROUP_NAME,
+                          logStreamName=LOG_STREAM_NAME
+                      )
+                      logger.info(f'Created log stream: {LOG_GROUP_NAME}/{LOG_STREAM_NAME}')
+                  except logs_client.exceptions.ResourceAlreadyExistsException:
+                      # Stream was created between check and create, that's fine
+                      pass
+                  except Exception as e:
+                      logger.warning(f'Could not create log stream: {str(e)}')
+
+          def put_log_events(log_lines):
+              """Put log events to CloudWatch Logs"""
+              try:
+                  ensure_log_stream_exists()
+
+                  # Get sequence token if stream exists
+                  sequence_token = None
+                  try:
+                      response = logs_client.describe_log_streams(
+                          logGroupName=LOG_GROUP_NAME,
+                          logStreamNamePrefix=LOG_STREAM_NAME,
+                          limit=1
+                      )
+                      if response['logStreams']:
+                          sequence_token = response['logStreams'][0].get('uploadSequenceToken')
+                  except Exception as e:
+                      logger.debug(f'Could not get sequence token: {str(e)}')
+
+                  # Prepare log events (use same timestamp for all events in batch)
+                  now = datetime.now(timezone.utc)
+                  timestamp = int(now.timestamp() * 1000)  # milliseconds since epoch
+
+                  log_events = [
+                      {
+                          'timestamp': timestamp,
+                          'message': log_line
+                      }
+                      for log_line in log_lines
+                  ]
+
+                  # Put log events
+                  put_kwargs = {
+                      'logGroupName': LOG_GROUP_NAME,
+                      'logStreamName': LOG_STREAM_NAME,
+                      'logEvents': log_events
+                  }
+
+                  if sequence_token:
+                      put_kwargs['sequenceToken'] = sequence_token
+
+                  logs_client.put_log_events(**put_kwargs)
+                  logger.debug(f'Successfully put {len(log_lines)} log events')
+
+              except Exception as e:
+                  logger.error(f'Failed to put log events: {str(e)}', exc_info=True)
+                  raise
+
           def lambda_handler(event, context):
               """Lambda handler to generate CLF format logs"""
               try:
                   # Generate 5-10 random log entries
                   num_logs = random.randint(5, 10)
-                  logs = []
+                  log_lines = []
 
                   for _ in range(num_logs):
                       log_line = generate_clf_log()
-                      logs.append(log_line)
+                      log_lines.append(log_line)
 
-                      # Log to CloudWatch Logs
-                      logger.info(log_line)
+                  # Write access logs to the specified log group/stream
+                  put_log_events(log_lines)
 
                   result = {
                       'statusCode': 200,
                       'message': f'Generated {num_logs} log entries',
+                      'logGroup': LOG_GROUP_NAME,
+                      'logStream': LOG_STREAM_NAME,
                       'timestamp': datetime.now(timezone.utc).isoformat()
                   }
 
-                  logger.info(f'SUCCESS: Generated {num_logs} log entries to CloudWatch Logs')
+                  logger.info(f'SUCCESS: Generated {num_logs} log entries to {LOG_GROUP_NAME}/{LOG_STREAM_NAME}')
 
                   return result
 
@@ -141,15 +246,16 @@ Resources:
                   logger.error(error_msg, exc_info=True)
                   raise
       Tags:
-        Project: HandsOn
-        Component: LogGenerator
+        - Key: Project
+          Value: HandsOn
+        - Key: Component
+          Value: LogGenerator
 
-  # EventBridge Rule to trigger Lambda every 5 minutes
+  # EventBridge Rule to trigger Lambda every 3 minutes
   LogGeneratorScheduleRule:
     Type: AWS::Events::Rule
     Properties:
-      RuleName: !Sub "${AWS::StackName}-log-generator-schedule"
-      Description: "Trigger log generator Lambda every 5 minutes"
+      Description: "Trigger log generator Lambda every 3 minutes"
       ScheduleExpression: !Ref ScheduleExpression
       State: ENABLED
       Targets:
@@ -180,6 +286,12 @@ Outputs:
     Value: !GetAtt LogGroup.Arn
     Export:
       Name: !Sub "${AWS::StackName}-LogGroupArn"
+
+  LogStreamName:
+    Description: "CloudWatch Logs stream name"
+    Value: !Ref LogStreamName
+    Export:
+      Name: !Sub "${AWS::StackName}-LogStreamName"
 
   LambdaFunctionName:
     Description: "Log generator Lambda function name"

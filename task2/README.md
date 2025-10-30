@@ -4,23 +4,15 @@
 
 EC2/ECS 上のアプリから **CloudWatch Logs** に継続出力される **アクセスログ（Common Log Format 互換）** を、**Kinesis Data Firehose** で **5分毎にバルク出力**して **S3** に蓄積。到着トリガーで **Lambda** がログを**パース・正規化・日次集計キー付与**までを行い、**後続の分析基盤（例: Athena/Glue、外部DWH など）**が取り込みやすい JSON に整形します。
 
-## 学習目標
-
-- CloudWatch Logs Subscription Filterの設定
-- Kinesis Data Firehoseの設定と動作確認
-- S3イベントトリガーによるLambda実行
-- ログパース処理の実装
-- データパイプラインの構築
-
 ## 要件定義
 
 ### 基本要件
 
-* CloudWatch Logs グループ（既存 or 新規）→ Subscription で **Firehose** へ配信
+* CloudWatch Logs グループ→ Subscription で **Firehose** へ配信
 * Firehose は **5分 or 5MB** をバッファ条件に **GZIP 圧縮**で **S3** へ配信（失敗時のバッファバケットも設定）
 * S3 の `raw/` プレフィックスに日付パーティションで到着（例: `s3://<bucket>/raw/2025/10/10/…`）
 * S3 **PUT イベント** で **Lambda** を起動し、GZIP を解凍→行毎にパース→**正規化 JSON** を `structured/` に書き戻し
-* Lambda は失敗時に **CloudWatch Logs** へ詳細出力。再実行可能な設計（冪等）
+* Lambda は `lambda/etl-processor.py`を使用してください。
 
 ### ログ例（CLF 互換）
 
@@ -49,15 +41,14 @@ flowchart LR
 `setup-log-generator.yaml` を使用してCloudFormationテンプレートをデプロイしてください。詳しい手順は [CloudFormationデプロイ手順](#cloudformationデプロイ手順) を参照してください。
 
 この環境により、以下のリソースが作成されます：
-- CloudWatch Logs グループ: `/aws/lambda/log-generator`
+- CloudWatch Logs グループ: `/aws/access-logs/app-access-logs`（アクセスログ用）
+- CloudWatch Logs ストリーム: `app-instance-001`（固定のインスタンスID形式）
 - EventBridge ルール: 5分ごとにLambda関数を実行
-- Lambda関数: CLF形式のログをCloudWatch Logsに出力
+- Lambda関数: CLF形式のログを指定されたCloudWatch Logsグループに直接出力
 
 ### 2. 必要なファイル
 
 - `setup-log-generator.yaml`: CloudFormationテンプレート（ログ生成環境）
-- `deploy-log-generator.sh`: デプロイスクリプト（Linux/Mac用）
-- `deploy-log-generator.ps1`: デプロイスクリプト（Windows用）
 - `lambda/etl-processor.py`: ETL処理用Lambda関数
 
 ## 実装のヒント
@@ -108,11 +99,16 @@ ETL処理用Lambda関数（`lambda/etl-processor.py`）を参照してくださ�
 ### 1. ログ生成の確認
 
 1. CloudFormationでデプロイしたログ生成環境が動作していることを確認
-2. CloudWatch Logsグループ `/aws/lambda/log-generator` にログが出力されていることを確認
+2. CloudWatch Logsグループ `/aws/access-logs/app-access-logs` にログが出力されていることを確認
 
 ```bash
-# CloudWatch Logsを確認
-aws logs tail /aws/lambda/log-generator --follow
+# CloudWatch Logsを確認（アクセスログ）
+aws logs tail /aws/access-logs/app-access-logs --follow
+
+# ログストリームを確認
+aws logs describe-log-streams \
+  --log-group-name /aws/access-logs/app-access-logs \
+  --log-stream-name-prefix app-instance-001
 ```
 
 ### 2. Firehose → S3への配信確認
@@ -192,11 +188,29 @@ aws logs tail /aws/lambda/<lambda-function-name> --follow
 
 2. CloudFormationスタックの削除（ログ生成環境）
    ```bash
-   # Linux/Mac
-   ./deploy-log-generator.sh destroy
+   # スタックの削除
+   aws cloudformation delete-stack \
+     --stack-name hands-on-log-generator \
+     --region ap-northeast-1
 
-   # Windows
-   .\deploy-log-generator.ps1 -Action destroy
+   # 削除状態の確認（オプション）
+   aws cloudformation describe-stacks \
+     --stack-name hands-on-log-generator \
+     --region ap-northeast-1
+   ```
+
+   Windows PowerShellの場合:
+   ```powershell
+   aws cloudformation delete-stack `
+     --stack-name hands-on-log-generator `
+     --region ap-northeast-1
+   ```
+
+   Windows CMDの場合:
+   ```cmd
+   aws cloudformation delete-stack ^
+     --stack-name hands-on-log-generator ^
+     --region ap-northeast-1
    ```
 
 **重要**: S3バケットにデータが残っている場合は手動で削除してください。費用が発生するため、必ず削除してください。
