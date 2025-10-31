@@ -22,7 +22,7 @@
 
 - **タスク1**: ALB + AutoScaling + EC2 で Web サーバ構築
 - **タスク2**: CloudWatch Logs → Firehose(5分バッファ) → S3 → Lambda 事前処理
-- **タスク3**: Lambda から Secrets Manager 経由で RDS にデータ挿入
+- **タスク3**: Lambda から RDS にデータ挿入
 
 ### 3. 各タスクの実施
 
@@ -46,7 +46,7 @@
 
 [詳細はこちら](./task2/README.md)
 
-### タスク3: Lambda から Secrets Manager 経由で RDS にデータ挿入
+### タスク3: Lambda から RDS にデータ挿入
 
 お問い合わせフォーム（フロントは省略）の送信情報を **Lambda** が受け取り、**Secrets Manager** に保管された DB 資格情報を用いて **RDS（MySQL/Aurora MySQL）** に **プライベート接続で INSERT** します。RDS は **プライベートサブネット**に配置し、インターネット非到達の状態とします。
 
