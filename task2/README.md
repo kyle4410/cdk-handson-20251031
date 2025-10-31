@@ -43,7 +43,7 @@ flowchart LR
 この環境により、以下のリソースが作成されます：
 - CloudWatch Logs グループ: `/aws/access-logs/app-access-logs`（アクセスログ用）
 - CloudWatch Logs ストリーム: `app-instance-001`（固定のインスタンスID形式）
-- EventBridge ルール: 5分ごとにLambda関数を実行
+- EventBridge ルール: 3分ごとにLambda関数を実行
 - Lambda関数: CLF形式のログを指定されたCloudWatch Logsグループに直接出力
 
 ### 2. 必要なファイル
